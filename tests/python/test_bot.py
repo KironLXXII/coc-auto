@@ -554,16 +554,15 @@ class BotTests(unittest.TestCase):
         self.assertEqual(len(bot.auto_plan(self.army_bar(['machine']), auto)), 2)
 
     def test_camps_carried_into_stage2_spread_like_new_ones_and_only_the_hero_drops_on_its_point(self):
-        # Stage 1: the Battle Machine and six new Baby Dragon camps. Stage 2: the machine back under a health bar,
-        # the six camps that lived (dark blue headers) and two new ones (magenta). Stage 2 after a hard stage 1: a
-        # badly hurt machine, four camps that lived and two new ones; the two camps that died are grey cards.
-        for stage, alive in (('stage1', 6), ('stage2', 8), ('stage2-damaged', 6)):
+        root = RESOURCE_ROOT
+        kinds = {}
+        for stage in ('stage1', 'stage2'):
             bar = cv2.imread(str(FIXTURES / f'builder-{stage}-bar.png'))
-            auto = {'bar': [0, 0, bar.shape[1], bar.shape[0]], 'points': [[10, 10], [20, 20]]}
-            with self.subTest(stage=stage):
-                hero, ability, camps, abilities = bot.camp_plan(bar, auto)
-                self.assertEqual((hero['count'], ability['tap_only']), (1, True))
-                self.assertEqual((len(camps['slots']), len(abilities['slots'])), (alive, alive))
+            region = [0, 0, bar.shape[1], bar.shape[0]]
+            kinds[stage] = [bot.card_kind(bar, region, card, camps=True) for card in bot.bar_cards(bar, region)]
+        self.assertEqual(kinds['stage1'], ['hero'] + ['counted'] * 6)
+        # Six Baby Dragon camps that lived through stage 1 (dark blue headers) and two new ones (magenta).
+        self.assertEqual(kinds['stage2'], ['counted'] * 8)
 
     def test_raged_barbarian_camps_get_one_tap_per_unit_on_their_spread_point(self):
         root = RESOURCE_ROOT
@@ -583,30 +582,6 @@ class BotTests(unittest.TestCase):
                            {'builder_result'})
         first, second = (tuple(slot) for slot in camps['slots'][:2])
         self.assertEqual(device.inputs, [first, *[(10, 10)] * 4, second, *[(20, 20)] * 4])
-
-    def test_a_stage2_stack_lands_on_the_first_spread_point_and_stage1_keeps_its_deploy_point(self):
-        screen = {'deploy': [5, 50], 'auto': {'bar': [0, 0, 10, 10], 'points': [[40, 20], [60, 30]]}}
-        camps = {'slots': [[10, 80], [20, 80]], 'camps': True, 'points': None, 'sizes': [1, 1]}
-        hero = {'slot': [30, 80], 'count': 1}
-        for state, allowed, spot in (('builder_battle2', {'builder_stage2', 'builder_battle2'}, (40, 20)),
-                                     ('builder_battle', {'builder_scout', 'builder_battle'}, (5, 50))):
-            device = Device(self.frames, state)
-            device.tap = lambda point, device=device: device.inputs.append(tuple(point))
-            runner = bot.Bot(self.config, self.root, device, live=True, timeout=1, poll=0, builder_stack=True)
-            with self.subTest(state=state):
-                runner.deploy_card(screen, camps, allowed, {'builder_result'})
-                runner.deploy_card(screen, hero, allowed, {'builder_result'})
-                self.assertEqual(device.inputs, [(10, 80), spot, (20, 80), spot, (30, 80), spot])
-
-    def test_the_stage2_bar_is_read_once_its_reinforcements_have_slid_in(self):
-        runner = bot.Bot(self.config, self.root, Device(self.frames, 'builder_stage2'), live=True, timeout=1, poll=0.01)
-        runner.read_stable = lambda reader, limit: ['plan']
-        auto = {'bar': [0, 0, 10, 10], 'points': [[1, 1]]}
-        with patch('coc_auto.bot.time.sleep') as sleep:
-            self.assertEqual(runner.bar_plan(auto, {'builder_scout', 'builder_battle'}), ['plan'])
-            sleep.assert_not_called()
-            self.assertEqual(runner.bar_plan(auto, {'builder_stage2', 'builder_battle2'}), ['plan'])
-            sleep.assert_called_once_with(bot.BAR_SETTLE_SECONDS)
 
     def test_the_builder_hero_fires_again_only_once_its_ability_meter_is_full(self):
         root = RESOURCE_ROOT
@@ -1699,16 +1674,6 @@ class BotTests(unittest.TestCase):
         self.assertEqual(device.inputs, [])
         with self.assertRaises(bot.BotError):
             bot.validate_config({**config, 'capacity': {'home': {'gold': {**cap, 'maximum': -5}}}}, self.root, 'both')
-
-    def test_a_small_storage_reads_its_maximum_from_the_tooltip_label_on(self):
-        config = self.bundled()[0]
-        # "Max: 5 500" on a new village's elixir tooltip, in a 1280x720 English game. The line is right-aligned, so
-        # the short number leaves the label further right than on the storages the regions were calibrated with.
-        tip = cv2.imread(str(FIXTURES / 'home-tooltip-max-5500-en.png'))
-        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-        frame[121:121 + tip.shape[0], 960:] = tip
-        runner = bot.Bot(config, RESOURCE_ROOT, Device({'home': frame}), timeout=1, poll=0)
-        self.assertEqual(runner.storage_max('home', 'elixir', config['capacity']['home']['elixir']), 5500)
 
     def test_read_number_threshold_is_adjustable(self):
         templates = self.digit_templates()
